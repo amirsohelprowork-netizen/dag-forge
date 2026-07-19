@@ -1,0 +1,30 @@
+name: data_quality_check
+description: "Run DQ checks and branch based on results"
+version: "1.0"
+variables:
+  dag_id:
+    description: "Unique identifier for the DAG"
+    type: string
+    required: true
+  schedule:
+    description: "Cron expression or preset"
+    type: string
+    default: "@daily"
+  sql_conn_id:
+    description: "Connection ID for the database"
+    type: string
+    required: true
+  check_sql:
+    description: "SQL query that must return 1 or True for success"
+    type: string
+    required: true
+  alert_email:
+    description: "Email address for failure alerts"
+    type: string
+    required: true
+example_values:
+  dag_id: dq_users_table
+  schedule: "@daily"
+  sql_conn_id: "postgres_default"
+  check_sql: "SELECT COUNT(*) = 0 FROM users WHERE email IS NULL"
+  alert_email: "dq-alerts@example.com"

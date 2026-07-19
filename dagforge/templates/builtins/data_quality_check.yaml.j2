@@ -1,0 +1,24 @@
+{{ dag_id }}:
+  description: "Data Quality Check Pipeline"
+  schedule: "{{ schedule }}"
+  tasks:
+    run_dq_check:
+      operator: sql_sensor
+      conn_id: "{{ sql_conn_id }}"
+      sql: "{{ check_sql }}"
+      poke_interval: 60
+      timeout: 3600
+      
+    on_success:
+      operator: empty
+      dependencies:
+        - run_dq_check
+        
+    send_alert:
+      operator: email
+      to: "{{ alert_email }}"
+      subject: "DQ Check Failed: {{ dag_id }}"
+      html_content: "The data quality check failed."
+      trigger_rule: "one_failed"
+      dependencies:
+        - run_dq_check

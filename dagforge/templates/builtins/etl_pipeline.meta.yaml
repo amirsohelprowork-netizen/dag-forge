@@ -1,0 +1,35 @@
+name: etl_pipeline
+description: "Standard Extract-Transform-Load pipeline with optional notification"
+version: "1.0"
+variables:
+  dag_id:
+    description: "Unique identifier for the DAG"
+    type: string
+    required: true
+  schedule:
+    description: "Cron expression or preset"
+    type: string
+    default: "@daily"
+  extract_command:
+    description: "Bash command to extract data"
+    type: string
+    required: true
+  transform_callable:
+    description: "Python callable path for transformation"
+    type: string
+    required: true
+  load_command:
+    description: "Bash command to load data"
+    type: string
+    required: true
+  alert_email:
+    description: "Email address for notifications (empty to disable)"
+    type: string
+    default: ""
+example_values:
+  dag_id: my_daily_etl
+  schedule: "0 5 * * *"
+  extract_command: "python extract.py"
+  transform_callable: "scripts.transform.run"
+  load_command: "python load.py"
+  alert_email: "data-team@example.com"

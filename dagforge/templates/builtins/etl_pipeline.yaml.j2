@@ -1,0 +1,32 @@
+{{ dag_id }}:
+  description: "ETL Pipeline"
+  schedule: "{{ schedule }}"
+  default_args:
+    owner: "airflow"
+    retries: 2
+  tasks:
+    extract:
+      operator: bash
+      bash_command: "{{ extract_command }}"
+    
+    transform:
+      operator: python
+      python_callable: "{{ transform_callable }}"
+      dependencies:
+        - extract
+        
+    load:
+      operator: bash
+      bash_command: "{{ load_command }}"
+      dependencies:
+        - transform
+        
+    {% if alert_email %}
+    notify:
+      operator: email
+      to: "{{ alert_email }}"
+      subject: "ETL {{ dag_id }} complete"
+      html_content: "The ETL pipeline has finished successfully."
+      dependencies:
+        - load
+    {% endif %}

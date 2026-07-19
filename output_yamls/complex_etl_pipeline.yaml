@@ -1,0 +1,62 @@
+complex_etl_pipeline:
+  default_args:
+    owner: data-team
+    start_date: '2024-01-01'
+    retries: '3'
+  schedule: 0 2 * * *
+  Description: Complex ETL pipeline with 10 tasks
+  catchup: false
+  tags:
+  - etl
+  - daily
+  - complex
+  tasks:
+    extract_users:
+      operator: airflow.operators.bash.BashOperator
+      bash_command: echo extracting users
+    extract_orders:
+      operator: airflow.operators.bash.BashOperator
+      bash_command: echo extracting orders
+    extract_payments:
+      operator: airflow.operators.bash.BashOperator
+      bash_command: echo extracting payments
+    validate_data:
+      operator: airflow.operators.python.PythonOperator
+      python_callable: scripts.validate
+      dependencies:
+      - extract_users
+      - extract_orders
+      - extract_payments
+    transform_users:
+      operator: airflow.operators.python.PythonOperator
+      python_callable: scripts.transform_users
+      dependencies:
+      - validate_data
+    transform_orders:
+      operator: airflow.operators.python.PythonOperator
+      python_callable: scripts.transform_orders
+      dependencies:
+      - validate_data
+    join_data:
+      operator: airflow.operators.python.PythonOperator
+      python_callable: scripts.join_data
+      dependencies:
+      - transform_users
+      - transform_orders
+    load_warehouse:
+      operator: airflow.operators.bash.BashOperator
+      bash_command: echo loading to DWH
+      dependencies:
+      - join_data
+    update_metrics:
+      operator: airflow.operators.bash.BashOperator
+      bash_command: echo updating metrics
+      dependencies:
+      - load_warehouse
+    send_alert:
+      operator: airflow.operators.email.EmailOperator
+      to: team@example.com
+      subject: ETL Done
+      html_content: Done!
+      dependencies:
+      - update_metrics

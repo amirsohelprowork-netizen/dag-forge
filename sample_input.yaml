@@ -1,0 +1,32 @@
+etl_pipeline:
+  default_args:
+    owner: "data-team"
+    start_date: "2024-01-01"
+    retries: 2
+  description: "Sample ETL pipeline for testing"
+  schedule_interval: "0 6 * * *"
+  catchup: false
+  tags:
+    - etl
+    - production
+  tasks:
+    extract_data:
+      operator: airflow.operators.bash.BashOperator
+      bash_command: "echo 'Extracting data...'"
+    transform_data:
+      operator: airflow.operators.python.PythonOperator
+      python_callable: "transform.run"
+      dependencies:
+        - extract_data
+    load_data:
+      operator: airflow.operators.bash.BashOperator
+      bash_command: "echo 'Loading data...'"
+      dependencies:
+        - transform_data
+    send_notification:
+      operator: airflow.operators.email.EmailOperator
+      to: "team@example.com"
+      subject: "ETL Complete"
+      html_content: "<p>ETL pipeline finished successfully</p>"
+      dependencies:
+        - load_data

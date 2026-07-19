@@ -1,0 +1,20 @@
+{{ dag_id }}:
+  description: "Sensor Process Notify Pipeline"
+  schedule: "{{ schedule }}"
+  tasks:
+    wait_for_upstream:
+      operator: external_task_sensor
+      external_dag_id: "{{ external_dag_id }}"
+      
+    process_data:
+      operator: python
+      python_callable: "{{ process_callable }}"
+      dependencies:
+        - wait_for_upstream
+        
+    notify_slack:
+      operator: slack
+      channel: "{{ slack_channel }}"
+      text: "Processing complete for {{ dag_id }}"
+      dependencies:
+        - process_data

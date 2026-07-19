@@ -1,0 +1,30 @@
+name: sensor_process_notify
+description: "Wait for an external event, process data, and send a notification"
+version: "1.0"
+variables:
+  dag_id:
+    description: "Unique identifier for the DAG"
+    type: string
+    required: true
+  schedule:
+    description: "Cron expression or preset"
+    type: string
+    default: "@hourly"
+  external_dag_id:
+    description: "ID of the upstream DAG to wait for"
+    type: string
+    required: true
+  process_callable:
+    description: "Python callable for processing"
+    type: string
+    required: true
+  slack_channel:
+    description: "Slack channel for notification"
+    type: string
+    required: true
+example_values:
+  dag_id: wait_and_process
+  schedule: "@hourly"
+  external_dag_id: upstream_data_generator
+  process_callable: "scripts.process.main"
+  slack_channel: "#data-alerts"
