@@ -1,7 +1,8 @@
 """Operator validator for DAG Forge.
 
 Validates that tasks have the required parameters for their operator type
-and warns about unknown or suspicious parameters.
+and warns about unknown or suspicious parameters.  All operator metadata
+is fetched from the ``dagforge.operators`` registry.
 """
 
 from __future__ import annotations
@@ -9,50 +10,17 @@ from __future__ import annotations
 import logging
 
 from dagforge.core.models import (
-    OPERATOR_REQUIRED_PARAMS,
     DagDefinition,
-    OperatorType,
     Severity,
     ValidationIssue,
     ValidationResult,
 )
 from dagforge.core.registry import registry
+from dagforge.operators import operator_registry
 from dagforge.validators.base import BaseValidator
 
 
 logger = logging.getLogger(__name__)
-
-# Known optional parameters per operator type
-OPERATOR_OPTIONAL_PARAMS: dict[OperatorType, set[str]] = {
-    OperatorType.EMPTY: set(),
-    OperatorType.BASH: {"env", "append_env", "output_encoding", "skip_on_exit_code", "cwd"},
-    OperatorType.PYTHON: {"op_args", "op_kwargs", "templates_dict", "templates_exts"},
-    OperatorType.BRANCH_PYTHON: {"op_args", "op_kwargs"},
-    OperatorType.SHORT_CIRCUIT: {"op_args", "op_kwargs", "ignore_downstream_trigger_rules"},
-    OperatorType.EXTERNAL_TASK_SENSOR: {
-        "external_dag_id", "external_task_id", "allowed_states",
-        "failed_states", "execution_delta", "execution_date_fn",
-    },
-    OperatorType.EMAIL: {"cc", "bcc", "mime_subtype", "mime_charset", "files"},
-    OperatorType.TRIGGER_DAG_RUN: {
-        "conf", "execution_date", "reset_dag_run", "wait_for_completion",
-    },
-    OperatorType.HTTP: {
-        "method", "data", "headers", "response_check", "response_filter",
-        "extra_options", "http_conn_id",
-    },
-    OperatorType.SQL_SENSOR: {
-        "success", "failure", "fail_on_empty", "poke_interval", "timeout",
-    },
-    OperatorType.POSTGRES: {"postgres_conn_id", "autocommit", "parameters", "database"},
-    OperatorType.MYSQL: {"mysql_conn_id", "autocommit", "parameters", "database"},
-    OperatorType.S3_TO_GCS: {"dest_gcs", "replace", "gzip", "aws_conn_id", "gcp_conn_id"},
-    OperatorType.GCS_TO_BIGQUERY: {"source_format", "create_disposition", "write_disposition", "autodetect", "gcp_conn_id"},
-    OperatorType.BIGQUERY: {"gcp_conn_id", "location", "job_id"},
-    OperatorType.SLACK: {"slack_conn_id", "username", "icon_url"},
-    OperatorType.DOCKER: {"api_version", "container_name", "cpus", "docker_url", "environment", "force_pull", "mem_limit"},
-    OperatorType.KUBERNETES_POD: {"cmds", "arguments", "ports", "volume_mounts", "volumes", "env_vars", "secrets", "in_cluster", "cluster_context"},
-}
 
 # Common Airflow task-level parameters (apply to any operator)
 COMMON_TASK_PARAMS: set[str] = {
@@ -77,6 +45,7 @@ class OperatorValidator(BaseValidator):
     - Required parameters are present for the operator type
     - Warns about unknown parameters that might be typos
     - Validates parameter value types where possible
+    - Validates nested parameter structure when specs define nested params
     """
 
     def validate(self, dag: DagDefinition) -> ValidationResult:
@@ -84,15 +53,29 @@ class OperatorValidator(BaseValidator):
         issues: list[ValidationIssue] = []
 
         for task in dag.tasks:
+            # Resolve the operator spec from the registry
+            try:
+                op_spec = operator_registry.get(task.operator)
+            except KeyError:
+                issues.append(ValidationIssue(
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Unknown operator '{task.operator}'. "
+                        "Cannot validate parameters."
+                    ),
+                    dag_id=dag.dag_id,
+                    task_id=task.task_id,
+                ))
+                continue
+
             # Check required params
-            required = OPERATOR_REQUIRED_PARAMS.get(task.operator, set())
-            for param in required:
+            for param in op_spec.required_params:
                 if param not in task.operator_params:
                     issues.append(ValidationIssue(
                         severity=Severity.ERROR,
                         message=(
                             f"Missing required parameter '{param}' "
-                            f"for {task.operator.value} operator"
+                            f"for {task.operator} operator"
                         ),
                         dag_id=dag.dag_id,
                         task_id=task.task_id,
@@ -100,24 +83,37 @@ class OperatorValidator(BaseValidator):
                     ))
 
             # Check for unknown params (warning only)
-            known_params = (
-                required
-                | OPERATOR_OPTIONAL_PARAMS.get(task.operator, set())
-                | COMMON_TASK_PARAMS
-            )
+            known_params = op_spec.all_param_names | COMMON_TASK_PARAMS
             for param in task.operator_params:
                 if param not in known_params:
                     issues.append(ValidationIssue(
                         severity=Severity.WARNING,
                         message=(
                             f"Unknown parameter '{param}' for "
-                            f"{task.operator.value} operator. "
+                            f"{task.operator} operator. "
                             "This may be intentional or a typo."
                         ),
                         dag_id=dag.dag_id,
                         task_id=task.task_id,
                         field=param,
                     ))
+
+            # Validate nested parameter structure
+            for param_name, param_value in task.operator_params.items():
+                param_spec = op_spec.get_param(param_name)
+                if (
+                    param_spec
+                    and param_spec.nested
+                    and isinstance(param_value, dict)
+                ):
+                    self._validate_nested(
+                        param_value,
+                        param_spec.nested,
+                        dag.dag_id,
+                        task.task_id,
+                        param_name,
+                        issues,
+                    )
 
             # Validate retries is a positive integer
             retries = task.operator_params.get("retries")
@@ -163,3 +159,26 @@ class OperatorValidator(BaseValidator):
                     ))
 
         return ValidationResult(issues=issues)
+
+    @staticmethod
+    def _validate_nested(
+        value: dict,
+        nested_specs: dict,
+        dag_id: str,
+        task_id: str,
+        parent_path: str,
+        issues: list[ValidationIssue],
+    ) -> None:
+        """Recursively validate nested parameter structure."""
+        for key, sub_value in value.items():
+            if key in nested_specs:
+                sub_spec = nested_specs[key]
+                if sub_spec.nested and isinstance(sub_value, dict):
+                    OperatorValidator._validate_nested(
+                        sub_value,
+                        sub_spec.nested,
+                        dag_id,
+                        task_id,
+                        f"{parent_path}.{key}",
+                        issues,
+                    )

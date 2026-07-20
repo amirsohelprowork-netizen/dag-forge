@@ -176,16 +176,20 @@ class TestDagDefinition:
 # -----------------------------------------------------------------------
 
 class TestOperatorType:
-    """Tests for OperatorType enum."""
+    """Tests for OperatorType string constants and operator registry."""
 
-    def test_full_class_paths(self):
-        assert OperatorType.EMPTY.full_class_path == "airflow.operators.empty.EmptyOperator"
-        assert OperatorType.BASH.full_class_path == "airflow.operators.bash.BashOperator"
-        assert OperatorType.PYTHON.full_class_path == "airflow.operators.python.PythonOperator"
+    def test_class_paths_via_registry(self):
+        from dagforge.operators import operator_registry
+
+        assert operator_registry.class_path(OperatorType.EMPTY) == "airflow.operators.empty.EmptyOperator"
+        assert operator_registry.class_path(OperatorType.BASH) == "airflow.operators.bash.BashOperator"
+        assert operator_registry.class_path(OperatorType.PYTHON) == "airflow.operators.python.PythonOperator"
 
     def test_all_operators_have_class_paths(self):
-        for op in OperatorType:
-            assert op.full_class_path, f"Missing class path for {op}"
+        from dagforge.operators import operator_registry
+
+        for op_key in OperatorType.values():
+            assert operator_registry.class_path(op_key), f"Missing class path for {op_key}"
 
 
 # -----------------------------------------------------------------------

@@ -1,0 +1,47 @@
+db_cloud_dag:
+  default_args:
+    owner: data-team
+    start_date: '2024-01-01'
+  schedule:
+  Description: DB and Cloud tasks
+  catchup: false
+  tags:
+  - db
+  - cloud
+  tasks:
+    wait_for_data:
+      operator: airflow.sensors.sql.SqlSensor
+      conn_id: pg_default
+      sql: SELECT 1
+    run_pg:
+      operator: airflow.providers.postgres.operators.postgres.PostgresOperator
+      sql: SELECT * FROM users
+      dependencies:
+      - wait_for_data
+    run_mysql:
+      operator: airflow.providers.mysql.operators.mysql.MySqlOperator
+      sql: SELECT * FROM orders
+      dependencies:
+      - wait_for_data
+    s3_to_gcs_task:
+      operator: 
+        airflow.providers.google.cloud.transfers.s3_to_gcs.S3ToGCSOperator
+      source_bucket: s3-bucket
+      source_object: data.csv
+      destination_bucket: gcs-bucket
+      dependencies:
+      - run_pg
+    gcs_to_bq_task:
+      operator: 
+        airflow.providers.google.cloud.transfers.gcs_to_bigquery.GCSToBigQueryOperator
+      bucket: gcs-bucket
+      source_objects: data.csv
+      destination_project_dataset_table: project.dataset.table
+      dependencies:
+      - s3_to_gcs_task
+    run_bq:
+      operator: 
+        airflow.providers.google.cloud.operators.bigquery.BigQueryInsertJobOperator
+      configuration: SELECT 1
+      dependencies:
+      - gcs_to_bq_task

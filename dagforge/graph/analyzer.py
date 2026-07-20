@@ -36,7 +36,7 @@ class GraphAnalyzer:
         g = nx.DiGraph()
 
         for task in self.dag.tasks:
-            g.add_node(task.task_id, operator=task.operator.value)
+            g.add_node(task.task_id, operator=task.operator)
 
         for task in self.dag.tasks:
             for dep in task.dependencies:
@@ -125,7 +125,7 @@ class GraphAnalyzer:
 
         # Define nodes with operator info
         for task in self.dag.tasks:
-            label = f"{task.task_id}\\n({task.operator.value})"
+            label = f"{task.task_id}\\n({task.operator})"
             lines.append(f'    {task.task_id}["{label}"]')
 
         # Define edges
@@ -190,7 +190,7 @@ class GraphAnalyzer:
         for node in order:
             depth = depths[node]
             task = self.dag.get_task(node)
-            operator_str = task.operator.value if task else "?"
+            operator_str = task.operator if task else "?"
 
             indent = "    " * depth
             prefix = "|-- " if depth > 0 else "* "

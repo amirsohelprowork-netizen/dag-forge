@@ -1,0 +1,38 @@
+data_dag:
+  default_args:
+    owner: data-team
+    start_date: '2024-01-01'
+  schedule: 0 6 * * *
+  Description: Data tasks
+  catchup: false
+  tags:
+  - data
+  - testing
+  tasks:
+    check_api:
+      operator: airflow.providers.http.operators.http.SimpleHttpOperator
+      endpoint: api/v1/status
+      method: GET
+    send_email:
+      operator: airflow.operators.email.EmailOperator
+      to: admin@local
+      subject: Alert
+      html_content: <p>Hi</p>
+      dependencies:
+      - check_api
+    send_slack:
+      operator: airflow.providers.slack.operators.slack.SlackAPIPostOperator
+      channel: '#general'
+      text: Hello from Airflow
+      dependencies:
+      - check_api
+    wait_for_dag:
+      operator: airflow.sensors.external_task.ExternalTaskSensor
+      external_dag_id: compute_dag
+      dependencies:
+      - check_api
+    trigger_other:
+      operator: airflow.operators.trigger_dagrun.TriggerDagRunOperator
+      trigger_dag_id: db_cloud_dag
+      dependencies:
+      - wait_for_dag

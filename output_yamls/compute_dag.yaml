@@ -1,0 +1,33 @@
+compute_dag:
+  default_args:
+    owner: data-team
+    start_date: '2024-01-01'
+  schedule: '@daily'
+  Description: Compute tasks
+  catchup: false
+  tags:
+  - compute
+  - testing
+  tasks:
+    start:
+      operator: airflow.operators.empty.EmptyOperator
+    run_bash:
+      operator: airflow.operators.bash.BashOperator
+      bash_command: echo 'hello'
+      dependencies:
+      - start
+    run_python:
+      operator: airflow.operators.python.PythonOperator
+      python_callable: my_module.my_func
+      dependencies:
+      - run_bash
+    branch_task:
+      operator: airflow.operators.python.BranchPythonOperator
+      python_callable: my_module.branch_func
+      dependencies:
+      - run_python
+    short_circuit_task:
+      operator: airflow.operators.python.ShortCircuitOperator
+      python_callable: my_module.check_func
+      dependencies:
+      - start

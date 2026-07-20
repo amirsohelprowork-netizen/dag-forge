@@ -23,6 +23,7 @@ from dagforge.core.models import (
     TaskDefinition,
 )
 from dagforge.core.registry import registry
+from dagforge.operators import operator_registry
 from dagforge.parsers.base import BaseParser
 
 
@@ -147,42 +148,16 @@ def _resolve_schedule(schedule_type_raw: Any, schedule_raw: Any) -> ScheduleConf
         )
 
 
-def _resolve_operator(task_type_raw: Any) -> OperatorType:
-    """Map a raw task type string to an OperatorType enum."""
+def _resolve_operator(task_type_raw: Any) -> str:
+    """Map a raw task type string to an operator key.
+
+    Uses the operator registry to resolve by key, alias, class path,
+    or class name.  Falls back to 'empty' if unrecognised.
+    """
     if pd.isna(task_type_raw) or not task_type_raw:
         return OperatorType.EMPTY
 
-    type_str = str(task_type_raw).strip().lower()
-
-    # Try direct enum match
-    try:
-        return OperatorType(type_str)
-    except ValueError:
-        pass
-
-    # Try common aliases
-    aliases: dict[str, OperatorType] = {
-        "emptyoperator": OperatorType.EMPTY,
-        "bashoperator": OperatorType.BASH,
-        "pythonoperator": OperatorType.PYTHON,
-        "branchpythonoperator": OperatorType.BRANCH_PYTHON,
-        "branch": OperatorType.BRANCH_PYTHON,
-        "shortcircuitoperator": OperatorType.SHORT_CIRCUIT,
-        "sensor": OperatorType.EXTERNAL_TASK_SENSOR,
-        "emailoperator": OperatorType.EMAIL,
-        "triggerdagrunoperator": OperatorType.TRIGGER_DAG_RUN,
-        "trigger": OperatorType.TRIGGER_DAG_RUN,
-        "httpoperator": OperatorType.HTTP,
-        "simplehttpoperator": OperatorType.HTTP,
-        "sqlsensor": OperatorType.SQL_SENSOR,
-    }
-
-    normalized = type_str.replace("_", "").replace("-", "").replace(" ", "")
-    if normalized in aliases:
-        return aliases[normalized]
-
-    logger.warning("Unknown operator type '%s', defaulting to EmptyOperator", task_type_raw)
-    return OperatorType.EMPTY
+    return operator_registry.resolve(str(task_type_raw)).key
 
 
 @registry.parser("excel")
@@ -318,16 +293,12 @@ class ExcelParser(BaseParser):
                 task_specs = task_row.get("task_specs")
                 if pd.notna(task_specs) and task_specs:
                     specs_str = str(task_specs).strip()
-                    if operator == OperatorType.BASH:
-                        operator_params["bash_command"] = specs_str
-                    elif operator == OperatorType.PYTHON:
-                        operator_params["python_callable"] = specs_str
-                    elif operator == OperatorType.TRIGGER_DAG_RUN:
-                        operator_params["trigger_dag_id"] = specs_str
-                    elif operator == OperatorType.HTTP:
-                        operator_params["endpoint"] = specs_str
+                    # Use registry to determine which param task_specs maps to
+                    specs_param = operator_registry.task_specs_param(operator)
+                    if specs_param:
+                        operator_params[specs_param] = specs_str
                     elif specs_str:
-                        # Generic: store as 'command' param
+                        # Fallback for operators without a task_specs mapping
                         operator_params["command"] = specs_str
 
                 # Add extra parameters from Task_parameters column

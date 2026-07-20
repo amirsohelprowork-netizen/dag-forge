@@ -1,0 +1,23 @@
+container_dag:
+  default_args:
+    owner: data-team
+    start_date: '2024-01-01'
+  schedule:
+  Description: Container tasks
+  catchup: false
+  tags:
+  - container
+  - k8s
+  tasks:
+    run_docker:
+      operator: airflow.providers.docker.operators.docker.DockerOperator
+      image: ubuntu:latest
+      container_name: my-container
+    run_k8s:
+      operator: 
+        airflow.providers.cncf.kubernetes.operators.pod.KubernetesPodOperator
+      image: ubuntu:latest
+      name: my-pod
+      namespace: default
+      dependencies:
+      - run_docker

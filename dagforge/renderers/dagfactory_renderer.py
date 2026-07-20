@@ -12,8 +12,9 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
-from dagforge.core.models import DagDefinition, OperatorType
+from dagforge.core.models import DagDefinition
 from dagforge.core.registry import registry
+from dagforge.operators import operator_registry
 from dagforge.renderers.base import BaseRenderer
 
 
@@ -45,7 +46,7 @@ def _build_dagfactory_dict(dag: DagDefinition) -> dict[str, Any]:
 
     for task in dag.tasks:
         task_entry: dict[str, Any] = {
-            "operator": task.operator.full_class_path,
+            "operator": operator_registry.class_path(task.operator),
         }
 
         # Add operator-specific params

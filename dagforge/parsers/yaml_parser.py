@@ -22,6 +22,7 @@ from dagforge.core.models import (
     TaskDefinition,
 )
 from dagforge.core.registry import registry
+from dagforge.operators import operator_registry
 from dagforge.parsers.base import BaseParser
 
 
@@ -64,30 +65,16 @@ def _parse_schedule(schedule_data: Any) -> ScheduleConfig:
     return ScheduleConfig(type=ScheduleType.TIMETABLE, expression=schedule_str)
 
 
-def _parse_operator(operator_data: Any) -> OperatorType:
-    """Parse operator type from YAML data."""
+def _parse_operator(operator_data: Any) -> str:
+    """Parse operator type from YAML data.
+
+    Uses the operator registry to resolve by key, alias, class path,
+    or class name.  Falls back to 'empty' if unrecognised.
+    """
     if operator_data is None:
         return OperatorType.EMPTY
 
-    op_str = str(operator_data).strip().lower()
-
-    # Try direct enum value
-    try:
-        return OperatorType(op_str)
-    except ValueError:
-        pass
-
-    # Try matching by full class path
-    for op_type in OperatorType:
-        if op_type.full_class_path.lower() == op_str:
-            return op_type
-        # Also match just the class name
-        class_name = op_type.full_class_path.split(".")[-1].lower()
-        if op_str == class_name:
-            return op_type
-
-    logger.warning("Unknown operator '%s', defaulting to EmptyOperator", operator_data)
-    return OperatorType.EMPTY
+    return operator_registry.resolve(str(operator_data)).key
 
 
 def _parse_dag_from_dict(dag_id: str, data: dict[str, Any]) -> DagDefinition:

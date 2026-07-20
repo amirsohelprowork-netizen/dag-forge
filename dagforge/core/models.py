@@ -27,80 +27,56 @@ class ScheduleType(str, Enum):
     TIMETABLE = "timetable"
 
 
-class OperatorType(str, Enum):
-    """Supported Airflow operator types.
+class OperatorType:
+    """Known Airflow operator keys.
 
-    The value is the short key used in input configs.
-    The full_class_path property returns the importable Airflow path.
+    This is **not** an enum — it is a plain namespace of string constants
+    so that existing code like ``OperatorType.BASH`` keeps working.  The
+    actual operator metadata (class path, params, aliases) lives in the
+    ``dagforge.operators`` package, one file per operator.
+
+    To look up the full class path, use::
+
+        from dagforge.operators import operator_registry
+        operator_registry.class_path("bash")
     """
 
-    EMPTY = "empty"
-    BASH = "bash"
-    PYTHON = "python"
-    BRANCH_PYTHON = "branch_python"
-    SHORT_CIRCUIT = "short_circuit"
-    EXTERNAL_TASK_SENSOR = "external_task_sensor"
-    EMAIL = "email"
-    TRIGGER_DAG_RUN = "trigger_dag_run"
-    HTTP = "http"
-    SQL_SENSOR = "sql_sensor"
-    POSTGRES = "postgres"
-    MYSQL = "mysql"
-    S3_TO_GCS = "s3_to_gcs"
-    GCS_TO_BIGQUERY = "gcs_to_bigquery"
-    BIGQUERY = "bigquery"
-    SLACK = "slack"
-    DOCKER = "docker"
-    KUBERNETES_POD = "kubernetes_pod"
+    EMPTY: str = "empty"
+    BASH: str = "bash"
+    PYTHON: str = "python"
+    BRANCH_PYTHON: str = "branch_python"
+    SHORT_CIRCUIT: str = "short_circuit"
+    EXTERNAL_TASK_SENSOR: str = "external_task_sensor"
+    EMAIL: str = "email"
+    TRIGGER_DAG_RUN: str = "trigger_dag_run"
+    HTTP: str = "http"
+    SQL_SENSOR: str = "sql_sensor"
+    POSTGRES: str = "postgres"
+    MYSQL: str = "mysql"
+    S3_TO_GCS: str = "s3_to_gcs"
+    GCS_TO_BIGQUERY: str = "gcs_to_bigquery"
+    BIGQUERY: str = "bigquery"
+    SLACK: str = "slack"
+    DOCKER: str = "docker"
+    KUBERNETES_POD: str = "kubernetes_pod"
 
-    @property
-    def full_class_path(self) -> str:
-        """Return the fully qualified Airflow operator class path."""
-        return OPERATOR_CLASS_MAP[self]
+    # Keep an iterable of all built-in keys for migration convenience
+    _ALL: list[str] = [
+        "empty", "bash", "python", "branch_python", "short_circuit",
+        "external_task_sensor", "email", "trigger_dag_run", "http",
+        "sql_sensor", "postgres", "mysql", "s3_to_gcs", "gcs_to_bigquery",
+        "bigquery", "slack", "docker", "kubernetes_pod",
+    ]
 
+    @classmethod
+    def values(cls) -> list[str]:
+        """Return all known operator keys (mirrors the old enum iteration)."""
+        return list(cls._ALL)
 
-OPERATOR_CLASS_MAP: dict[OperatorType, str] = {
-    OperatorType.EMPTY: "airflow.operators.empty.EmptyOperator",
-    OperatorType.BASH: "airflow.operators.bash.BashOperator",
-    OperatorType.PYTHON: "airflow.operators.python.PythonOperator",
-    OperatorType.BRANCH_PYTHON: "airflow.operators.python.BranchPythonOperator",
-    OperatorType.SHORT_CIRCUIT: "airflow.operators.python.ShortCircuitOperator",
-    OperatorType.EXTERNAL_TASK_SENSOR: "airflow.sensors.external_task.ExternalTaskSensor",
-    OperatorType.EMAIL: "airflow.operators.email.EmailOperator",
-    OperatorType.TRIGGER_DAG_RUN: "airflow.operators.trigger_dagrun.TriggerDagRunOperator",
-    OperatorType.HTTP: "airflow.providers.http.operators.http.SimpleHttpOperator",
-    OperatorType.SQL_SENSOR: "airflow.sensors.sql.SqlSensor",
-    OperatorType.POSTGRES: "airflow.providers.postgres.operators.postgres.PostgresOperator",
-    OperatorType.MYSQL: "airflow.providers.mysql.operators.mysql.MySqlOperator",
-    OperatorType.S3_TO_GCS: "airflow.providers.google.cloud.transfers.s3_to_gcs.S3ToGCSOperator",
-    OperatorType.GCS_TO_BIGQUERY: "airflow.providers.google.cloud.transfers.gcs_to_bigquery.GCSToBigQueryOperator",
-    OperatorType.BIGQUERY: "airflow.providers.google.cloud.operators.bigquery.BigQueryInsertJobOperator",
-    OperatorType.SLACK: "airflow.providers.slack.operators.slack.SlackAPIPostOperator",
-    OperatorType.DOCKER: "airflow.providers.docker.operators.docker.DockerOperator",
-    OperatorType.KUBERNETES_POD: "airflow.providers.cncf.kubernetes.operators.pod.KubernetesPodOperator",
-}
+    def __class_getitem__(cls, key: str) -> str:  # type: ignore[override]
+        """Allow OperatorType['bash'] style access."""
+        return getattr(cls, key.upper())
 
-# Required parameters per operator type (validated by OperatorValidator)
-OPERATOR_REQUIRED_PARAMS: dict[OperatorType, set[str]] = {
-    OperatorType.EMPTY: set(),
-    OperatorType.BASH: {"bash_command"},
-    OperatorType.PYTHON: {"python_callable"},
-    OperatorType.BRANCH_PYTHON: {"python_callable"},
-    OperatorType.SHORT_CIRCUIT: {"python_callable"},
-    OperatorType.EXTERNAL_TASK_SENSOR: set(),
-    OperatorType.EMAIL: {"to", "subject", "html_content"},
-    OperatorType.TRIGGER_DAG_RUN: {"trigger_dag_id"},
-    OperatorType.HTTP: {"endpoint"},
-    OperatorType.SQL_SENSOR: {"conn_id", "sql"},
-    OperatorType.POSTGRES: {"sql"},
-    OperatorType.MYSQL: {"sql"},
-    OperatorType.S3_TO_GCS: {"source_bucket", "source_object", "destination_bucket"},
-    OperatorType.GCS_TO_BIGQUERY: {"bucket", "source_objects", "destination_project_dataset_table"},
-    OperatorType.BIGQUERY: {"configuration"},
-    OperatorType.SLACK: {"channel", "text"},
-    OperatorType.DOCKER: {"image"},
-    OperatorType.KUBERNETES_POD: {"name", "namespace", "image"},
-}
 
 # Valid Airflow schedule presets
 VALID_PRESETS: frozenset[str] = frozenset({
@@ -248,9 +224,10 @@ class TaskDefinition(BaseModel):
         ...,
         description="Unique identifier for the task within its DAG",
     )
-    operator: OperatorType = Field(
+    operator: str = Field(
         default=OperatorType.EMPTY,
-        description="Airflow operator type",
+        description="Airflow operator key (e.g. 'bash', 'python'). "
+        "See dagforge.operators for all registered operators.",
     )
     operator_params: dict[str, Any] = Field(
         default_factory=dict,
