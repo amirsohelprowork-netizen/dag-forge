@@ -6,9 +6,9 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Airflow 2.0+](https://img.shields.io/badge/airflow-2.0+-green.svg)](https://airflow.apache.org/)
 
-**DAG Forge** is an open-source, production-grade Python toolkit that enables Data Engineers to author, validate, preview, and generate Apache Airflow DAGs from multiple input formats—including Excel spreadsheets, YAML, and JSON. 
+**DAG Forge** is an open-source, production-grade Python toolkit that empowers Data Teams to author, validate, preview, and generate Apache Airflow DAGs from accessible formats like Excel spreadsheets, YAML, and JSON. 
 
-By abstracting away raw Python DAG writing, DAG Forge enables business analysts, data scientists, and engineers to easily construct highly complex data pipelines without writing code. Under the hood, it converts your simplified pipeline requirements into 100% compliant `dag-factory` YAML configurations.
+By abstracting away complex raw Python DAG writing, DAG Forge allows business analysts, data scientists, and engineers to construct massive, interdependent data pipelines with zero coding required. It validates your architecture against strict organizational policies and dynamically renders 100% compliant `dag-factory` YAML configurations ready for deployment.
 
 ---
 
@@ -16,15 +16,16 @@ By abstracting away raw Python DAG writing, DAG Forge enables business analysts,
 
 - 📊 **Excel-to-Airflow Pipeline Automation** — Empower non-engineers to design Airflow DAGs using structured Excel templates (`Dag_config`, `Task_details`, `Dependency_flow`).
 - 🤖 **dag-factory Native Integration** — The output is perfectly valid `dag-factory` YAML. Drop it directly into your Airflow DAGs folder.
-- ✅ **Deep Validation & Linting** — Validate parameters for 8+ critical Airflow operators before deployment. Catch typos, missing required variables, and invalid references early.
+- ✅ **Deep Validation & Linting** — Validate parameters for 18 built-in Airflow operators before deployment. Catch typos, missing required variables, and invalid references early.
 - 🔗 **Graph Analysis & Cycle Detection** — Built-in dependency cycle detection, topological sorting, and critical path highlighting prevents broken DAG deployments.
 - 📐 **Jinja2 Template Engine** — Stop repeating yourself. Use built-in dynamic templates for common architectures (ETL pipelines, Sensor-Processor-Notify, Data Quality Checks).
 - 🛡️ **Organizational Policy Engine** — Enforce enterprise-grade standards automatically. Require specific tags, enforce owners, and restrict manual schedules to maintain hygiene across your Airflow deployment.
 - 🌍 **Environment Management** — Seamlessly inject `dev`, `staging`, or `prod` overlays onto your DAGs to dynamically rewrite connections, override pool sizes, or disable schedules in lower environments.
+- 🧩 **Modular Operator Registry** — Natively supports 18 operators out-of-the-box. Easily extend the ecosystem by dropping a single Python specification file into the registry to support custom task types with deeply nested parameters.
 - 🔌 **Extensible Plugin Architecture** — Use Python `entry_points` to inject custom Parsers, Validators, Renderers, and Policies explicitly tailored to your organization.
 
 ## 🛠️ Operators Supported
-DAG Forge deeply validates configurations for the following Airflow operators:
+DAG Forge deeply validates configurations and complex nested parameters for 18 built-in Airflow operators out-of-the-box:
 - **Compute/Bash:** `BashOperator`, `PythonOperator`, `EmptyOperator`, `BranchPythonOperator`, `ShortCircuitOperator`
 - **Sensors:** `ExternalTaskSensor`, `SqlSensor`
 - **Notifications & HTTP:** `EmailOperator`, `SlackAPIPostOperator`, `SimpleHttpOperator`
