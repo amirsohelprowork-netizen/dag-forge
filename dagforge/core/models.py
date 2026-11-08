@@ -107,6 +107,7 @@ class ValidationIssue(BaseModel):
     dag_id: str | None = None
     task_id: str | None = None
     field: str | None = None
+    locations: list[str] = Field(default_factory=list)
 
     def __str__(self) -> str:
         location_parts: list[str] = []
@@ -116,6 +117,7 @@ class ValidationIssue(BaseModel):
             location_parts.append(f"Task '{self.task_id}'")
         if self.field:
             location_parts.append(f"Field '{self.field}'")
+        location_parts.extend(self.locations)
         location = " -> ".join(location_parts) if location_parts else "Global"
         return f"[{self.severity.value.upper()}] {location}: {self.message}"
 
@@ -352,3 +354,7 @@ class ParseResult(BaseModel):
     dags: list[DagDefinition] = Field(default_factory=list)
     source: str = Field(default="", description="Source file or description")
     warnings: list[str] = Field(default_factory=list)
+    # Keys identify a DAG, an optional task, and an optional canonical field.
+    locations: dict[tuple[str, str | None, str | None], list[str]] = Field(
+        default_factory=dict, exclude=True
+    )

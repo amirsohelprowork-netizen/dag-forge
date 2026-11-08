@@ -70,7 +70,7 @@ class OperatorValidator(BaseValidator):
 
             # Check required params
             for param in op_spec.required_params:
-                if param not in task.operator_params:
+                if task.operator_params.get(param) in (None, ""):
                     issues.append(ValidationIssue(
                         severity=Severity.ERROR,
                         message=(

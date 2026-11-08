@@ -107,7 +107,7 @@ def _parse_dag_from_dict(dag_id: str, data: dict[str, Any]) -> DagDefinition:
     if isinstance(tasks_data, dict):
         for task_id, task_data in tasks_data.items():
             if not isinstance(task_data, dict):
-                continue
+                raise ValueError(f"Task '{task_id}' must be a mapping")
 
             operator = _parse_operator(task_data.get("operator"))
 
@@ -130,9 +130,9 @@ def _parse_dag_from_dict(dag_id: str, data: dict[str, Any]) -> DagDefinition:
             ))
 
     elif isinstance(tasks_data, list):
-        for task_data in tasks_data:
+        for index, task_data in enumerate(tasks_data, start=1):
             if not isinstance(task_data, dict):
-                continue
+                raise ValueError(f"Task entry {index} must be a mapping")
             task_id = str(task_data.get("task_id", task_data.get("id", "")))
             operator = _parse_operator(task_data.get("operator"))
 
@@ -161,6 +161,42 @@ def _parse_dag_from_dict(dag_id: str, data: dict[str, Any]) -> DagDefinition:
         tags=tags,
         tasks=tasks,
     )
+
+
+def _parse_document(raw_data: dict, source: Path) -> ParseResult:
+    """Parse DAG entries shared by YAML and JSON and report any skipped definitions."""
+    entries: list[tuple[str, dict]] = []
+    errors: list[str] = []
+    if isinstance(raw_data.get("dags"), list):
+        for index, data in enumerate(raw_data["dags"], start=1):
+            if not isinstance(data, dict):
+                errors.append(f"DAG entry {index} must be a mapping")
+                continue
+            dag_id = data.get("dag_id", data.get("id", ""))
+            if dag_id is None or not str(dag_id).strip():
+                errors.append(f"DAG entry {index} is missing dag_id")
+                continue
+            entries.append((str(dag_id), data))
+    else:
+        for key, value in raw_data.items():
+            key = str(key)
+            if isinstance(value, dict) and not key.startswith("_") and key not in (
+                "version", "metadata", "$schema"
+            ):
+                entries.append((key, value))
+
+    dags: list[DagDefinition] = []
+    for dag_id, data in entries:
+        try:
+            dags.append(_parse_dag_from_dict(dag_id, data))
+        except (ValueError, TypeError) as error:
+            errors.append(f"DAG '{dag_id}': {error}")
+
+    if errors:
+        raise ParseError("Invalid DAG definitions", source=str(source), details=errors)
+    if not dags:
+        raise ParseError("No DAG definitions found", source=str(source))
+    return ParseResult(dags=dags, source=str(source))
 
 
 @registry.parser("yaml")
@@ -201,7 +237,6 @@ class YamlParser(BaseParser):
             raise ParseError(f"File not found: {source}", source=str(source))
 
         logger.info("Parsing YAML file: %s", source)
-        warnings: list[str] = []
 
         try:
             with open(source, encoding="utf-8") as f:
@@ -217,38 +252,4 @@ class YamlParser(BaseParser):
                 source=str(source),
             )
 
-        dags: list[DagDefinition] = []
-
-        # Check for explicit 'dags' list format
-        if "dags" in raw_data and isinstance(raw_data["dags"], list):
-            for dag_data in raw_data["dags"]:
-                if not isinstance(dag_data, dict):
-                    continue
-                dag_id = str(dag_data.get("dag_id", dag_data.get("id", "")))
-                if not dag_id:
-                    warnings.append("Skipping DAG with missing dag_id")
-                    continue
-                try:
-                    dag = _parse_dag_from_dict(dag_id, dag_data)
-                    dags.append(dag)
-                except Exception as e:
-                    warnings.append(f"DAG '{dag_id}': {e}")
-
-        else:
-            # dag-factory style: each top-level key is a DAG ID
-            for key, value in raw_data.items():
-                if not isinstance(value, dict):
-                    continue
-                # Skip metadata keys
-                if key.startswith("_") or key in ("version", "metadata"):
-                    continue
-                try:
-                    dag = _parse_dag_from_dict(str(key), value)
-                    dags.append(dag)
-                except Exception as e:
-                    warnings.append(f"DAG '{key}': {e}")
-
-        if not dags:
-            warnings.append("No valid DAG definitions found in YAML file")
-
-        return ParseResult(dags=dags, source=str(source), warnings=warnings)
+        return _parse_document(raw_data, source)

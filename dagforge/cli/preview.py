@@ -81,7 +81,9 @@ def preview(
         parser = parser_cls()
         result = parser.parse(source)
     except DagForgeError as e:
-        console.print(f"[red]ERROR: {e.message}[/red]")
+        click.echo(f"ERROR: {e.message}", err=True)
+        for detail in e.details:
+            click.echo(detail, err=True)
         sys.exit(2)
 
     if not result.dags:

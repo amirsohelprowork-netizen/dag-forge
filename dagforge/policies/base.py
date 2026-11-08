@@ -16,6 +16,7 @@ class PolicyViolation(BaseModel):
     message: str
     dag_id: str
     task_id: str | None = None
+    field: str | None = None
     
     def __str__(self) -> str:
         loc = f"DAG '{self.dag_id}'"

@@ -84,7 +84,7 @@ class OperatorRegistry:
             )
         return self._specs[key]
 
-    def resolve(self, raw: str) -> OperatorSpec:
+    def resolve(self, raw: str, *, strict: bool = False) -> OperatorSpec:
         """Resolve an operator from a raw string.
 
         The resolution order is:
@@ -92,7 +92,7 @@ class OperatorRegistry:
         2. Normalized alias match
         3. Full class-path match (case-insensitive)
         4. Class-name-only match (case-insensitive)
-        5. Falls back to 'empty' operator (with a warning)
+        5. Raises KeyError in strict mode, otherwise falls back to 'empty'
         """
         if not raw:
             return self.get("empty")
@@ -118,6 +118,8 @@ class OperatorRegistry:
             return self._specs[self._class_name_index[normalized]]
 
         # 5. Fallback
+        if strict:
+            raise KeyError(f"Unknown operator '{raw}'")
         logger.warning("Unknown operator '%s', defaulting to 'empty'", raw)
         return self.get("empty")
 

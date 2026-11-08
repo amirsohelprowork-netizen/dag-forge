@@ -42,6 +42,8 @@ class ReportRenderer(BaseRenderer):
         self,
         dags: list[DagDefinition],
         validation_result: ValidationResult,
+        *,
+        strict: bool = False,
     ) -> str:
         """Render a full validation report.
 
@@ -92,6 +94,8 @@ class ReportRenderer(BaseRenderer):
                     parts.append(f"[{issue.task_id}]")
                 if issue.field:
                     parts.append(f"({issue.field})")
+                if issue.locations:
+                    parts.append(" / ".join(issue.locations))
                 parts.append(issue.message)
                 formatted = " ".join(parts)
 
@@ -117,7 +121,7 @@ class ReportRenderer(BaseRenderer):
                 lines.append("")
 
         # Status line
-        if validation_result.has_errors:
+        if validation_result.has_errors or (strict and validation_result.warnings):
             lines.append("  [FAIL] VALIDATION FAILED")
         else:
             lines.append("  [PASS] VALIDATION PASSED")
@@ -129,6 +133,8 @@ class ReportRenderer(BaseRenderer):
         self,
         dags: list[DagDefinition],
         validation_result: ValidationResult,
+        *,
+        strict: bool = False,
     ) -> str:
         """Render validation report as JSON for CI/CD integration.
 
@@ -145,7 +151,7 @@ class ReportRenderer(BaseRenderer):
                 "total_tasks": sum(len(d.tasks) for d in dags),
                 "errors": len(validation_result.errors),
                 "warnings": len(validation_result.warnings),
-                "passed": not validation_result.has_errors,
+                "passed": not (validation_result.has_errors or (strict and validation_result.warnings)),
             },
             "dags": [
                 {
@@ -162,6 +168,7 @@ class ReportRenderer(BaseRenderer):
                     "dag_id": i.dag_id,
                     "task_id": i.task_id,
                     "field": i.field,
+                    **({"locations": i.locations} if i.locations else {}),
                 }
                 for i in validation_result.issues
             ],

@@ -15,6 +15,7 @@ class RequireTagsPolicy(BasePolicy):
                     severity=Severity.ERROR,
                     message="DAG must have at least one tag.",
                     dag_id=dag.dag_id,
+                    field="tags",
                 )
             ]
         return []
@@ -30,6 +31,7 @@ class RequireDescriptionPolicy(BasePolicy):
                     severity=Severity.WARNING,
                     message="DAG should have a description.",
                     dag_id=dag.dag_id,
+                    field="description",
                 )
             ]
         return []
@@ -46,6 +48,7 @@ class RequireOwnerPolicy(BasePolicy):
                     severity=Severity.ERROR,
                     message="DAG must define an owner other than 'airflow' in default_args.",
                     dag_id=dag.dag_id,
+                    field="default_args.owner",
                 )
             ]
         return []
@@ -77,6 +80,7 @@ class NoManualSchedulePolicy(BasePolicy):
                     severity=Severity.WARNING,
                     message="DAG uses a manual schedule. Prod DAGs should usually be automated.",
                     dag_id=dag.dag_id,
+                    field="schedule",
                 )
             ]
         return []

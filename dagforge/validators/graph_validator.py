@@ -84,6 +84,7 @@ class GraphValidator(BaseValidator):
                     severity=Severity.ERROR,
                     message=f"Circular dependency detected: {cycle_str}",
                     dag_id=dag.dag_id,
+                    field="dependencies",
                 ))
         except nx.NetworkXError:
             pass  # Graph is empty or has no edges

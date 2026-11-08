@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
 
 import click
 from rich.console import Console
@@ -49,7 +48,7 @@ def _setup_logging(verbose: bool) -> None:
         level=level,
         format="%(message)s",
         handlers=[RichHandler(
-            console=console,
+            console=Console(stderr=True),
             rich_tracebacks=True,
             show_path=verbose,
         )],

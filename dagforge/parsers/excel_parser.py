@@ -8,15 +8,19 @@ Also supports a cleaned-up format with standardized column names.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from openpyxl.utils.cell import get_column_letter
+from pydantic import ValidationError
 
 from dagforge.core.exceptions import ParseError
 from dagforge.core.models import (
     DagDefinition,
-    OperatorType,
     ParseResult,
     ScheduleConfig,
     ScheduleType,
@@ -75,276 +79,242 @@ TASK_SHEET_NAMES = ["Task_details", "task_details", "tasks"]
 DEP_SHEET_NAMES = ["Dependency_flow", "dependency_flow", "dependencies"]
 
 
-def _normalize_columns(df: pd.DataFrame, column_map: dict[str, str]) -> pd.DataFrame:
-    """Rename DataFrame columns to standardized names."""
-    rename_map = {}
-    for col in df.columns:
-        col_str = str(col).strip()
-        if col_str in column_map:
-            rename_map[col] = column_map[col_str]
-    return df.rename(columns=rename_map)
+@dataclass
+class _Sheet:
+    name: str
+    frame: pd.DataFrame
+
+    def rows(self) -> Iterator[tuple[int, pd.Series]]:
+        # Preserve the original index so gaps in the workbook count toward row numbers.
+        return self.frame.dropna(how="all").iterrows()
+
+    def cell(self, index: int, field: str) -> str:
+        row = index + 2  # The header occupies Excel row 1.
+        if field not in self.frame.columns:
+            return f"{self.name} row {row} ({field} column)"
+        column = get_column_letter(self.frame.columns.get_loc(field) + 1)
+        return f"{self.name}!{column}{row}"
+
+    def require_columns(self, *fields: str) -> None:
+        missing = [field for field in fields if field not in self.frame.columns]
+        if missing:
+            raise ParseError(f"{self.name} row 1 is missing columns: {', '.join(missing)}")
 
 
-def _find_sheet(
-    excel_file: pd.ExcelFile, candidates: list[str], label: str
-) -> str:
-    """Find a matching sheet name from a list of candidates."""
-    available = excel_file.sheet_names
-    for candidate in candidates:
-        if candidate in available:
-            return candidate
+def _read_sheet(
+    excel: pd.ExcelFile, candidates: list[str], columns: dict[str, str]
+) -> _Sheet:
+    for name in candidates:
+        if name in excel.sheet_names:
+            frame = excel.parse(name)
+            frame = frame.rename(columns=lambda col: columns.get(str(col).strip(), col))
+            if not frame.columns.is_unique:
+                raise ParseError(f"{name} row 1 contains duplicate column names")
+            return _Sheet(name, frame)
     raise ParseError(
-        f"Could not find {label} sheet. "
-        f"Tried: {candidates}. Available sheets: {available}",
-        source=str(excel_file),
+        f"Missing sheet '{candidates[0]}'. Available sheets: {', '.join(excel.sheet_names)}"
     )
 
 
-def _parse_key_value_string(kv_string: Any) -> dict[str, str]:
-    """Parse 'key: value, key2: value2' format strings into a dictionary.
+def _text(value: Any) -> str:
+    return str(value).strip() if pd.notna(value) else ""
 
-    This is backwards-compatible with the original project's format.
-    Handles NaN, None, and empty strings gracefully.
-    """
-    if pd.isna(kv_string) or not kv_string:
-        return {}
 
+def _dag_ref(value: Any) -> Any:
+    # Keep numeric references comparable across sheets with and without blank rows.
+    return value if pd.notna(value) and not isinstance(value, str) else _text(value)
+
+
+def _parse_key_value_string(value: Any, cell: str) -> dict[str, str]:
+    """Parse the legacy comma-separated key/value format."""
     parsed: dict[str, str] = {}
-    raw = str(kv_string)
-
-    for item in raw.split(","):
-        item = item.strip()
-        if ":" in item:
-            key, value = item.split(":", 1)
-            key = key.strip()
-            value = value.strip().strip("'\"")
-            if key:
-                parsed[key] = value
-
+    for item in _text(value).split(","):
+        if not item.strip():
+            continue
+        key, separator, raw_value = item.partition(":")
+        if not separator or not key.strip():
+            raise ParseError(f"{cell}: Expected 'key: value', found '{item.strip()}'")
+        parsed[key.strip()] = raw_value.strip().strip("'\"")
     return parsed
 
 
-def _resolve_schedule(schedule_type_raw: Any, schedule_raw: Any) -> ScheduleConfig:
-    """Convert raw schedule fields into a ScheduleConfig."""
-    sched_type_str = str(schedule_type_raw).strip().lower() if pd.notna(schedule_type_raw) else ""
-    sched_expr = str(schedule_raw).strip() if pd.notna(schedule_raw) else ""
-
-    # Normalize empty/nan values
-    if sched_expr.lower() in ("nan", "none", "null", ""):
-        sched_expr = ""
-
-    if sched_type_str in ("manual", "") or not sched_type_str or sched_type_str == "nan":
-        return ScheduleConfig(type=ScheduleType.MANUAL, expression=None)
-    elif sched_type_str == "preset":
-        return ScheduleConfig(type=ScheduleType.PRESET, expression=sched_expr)
-    elif sched_type_str == "cron":
-        return ScheduleConfig(type=ScheduleType.CRON, expression=sched_expr)
-    elif sched_type_str == "timetable":
-        return ScheduleConfig(type=ScheduleType.TIMETABLE, expression=sched_expr)
-    else:
-        raise ParseError(
-            f"Unknown schedule type: '{schedule_type_raw}'. "
-            "Must be one of: manual, preset, cron, timetable"
-        )
+def _resolve_schedule(kind: ScheduleType, expression: str) -> ScheduleConfig:
+    if kind == ScheduleType.MANUAL:
+        return ScheduleConfig(type=kind)
+    if expression.lower() in ("", "nan", "none", "null"):
+        return ScheduleConfig(type=kind)
+    return ScheduleConfig(type=kind, expression=expression)
 
 
-def _resolve_operator(task_type_raw: Any) -> str:
-    """Map a raw task type string to an operator key.
+def _model_error(error: ValidationError) -> str:
+    return error.errors()[0]["msg"].removeprefix("Value error, ")
 
-    Uses the operator registry to resolve by key, alias, class path,
-    or class name.  Falls back to 'empty' if unrecognised.
-    """
-    if pd.isna(task_type_raw) or not task_type_raw:
-        return OperatorType.EMPTY
 
-    return operator_registry.resolve(str(task_type_raw)).key
+def _task_param_value(value: str) -> Any:
+    if value.isdecimal():
+        return int(value)
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    return value
 
 
 @registry.parser("excel")
 class ExcelParser(BaseParser):
-    """Parser for Excel input files.
-
-    Supports the original DAG Factory YAML Builder 3-sheet format:
-    - Dad_config (or Dag_config): DAG-level configuration
-    - Task_details: Task definitions
-    - Dependency_flow: Task dependency relationships
-
-    Column names are normalized to handle the original project's
-    inconsistent naming (e.g., dad_ref vs dag_ref, Task_id vs Task_ID).
-    """
+    """Parse the DAG, task, and dependency sheets in a DAG Forge workbook."""
 
     @property
     def supported_extensions(self) -> set[str]:
         return {".xlsx", ".xls"}
 
     def parse(self, source: Path) -> ParseResult:
-        """Parse an Excel file into DAG definitions.
-
-        Args:
-            source: Path to the Excel file.
-
-        Returns:
-            ParseResult with parsed DAGs and any warnings.
-
-        Raises:
-            ParseError: If the file cannot be read or is missing required sheets.
-        """
-        if not source.exists():
-            raise ParseError(f"File not found: {source}", source=str(source))
-
-        # Skip Excel temp files
         if source.name.startswith("~$"):
-            raise ParseError(
-                f"Skipping temporary Excel file: {source.name}",
-                source=str(source),
-            )
+            raise ParseError(f"Skipping temporary Excel file: {source.name}", source=str(source))
 
         logger.info("Parsing Excel file: %s", source)
-        warnings: list[str] = []
-
         try:
-            excel_file = pd.ExcelFile(source, engine="openpyxl")
-        except Exception as e:
-            raise ParseError(
-                f"Failed to open Excel file: {e}", source=str(source)
-            ) from e
-
-        # Find and read sheets
-        try:
-            dag_sheet = _find_sheet(excel_file, DAG_SHEET_NAMES, "DAG config")
-            task_sheet = _find_sheet(excel_file, TASK_SHEET_NAMES, "Task details")
-            dep_sheet = _find_sheet(excel_file, DEP_SHEET_NAMES, "Dependencies")
+            with pd.ExcelFile(source, engine="openpyxl") as excel:
+                dag_sheet = _read_sheet(excel, DAG_SHEET_NAMES, DAG_COLUMN_MAP)
+                task_sheet = _read_sheet(excel, TASK_SHEET_NAMES, TASK_COLUMN_MAP)
+                dep_sheet = _read_sheet(excel, DEP_SHEET_NAMES, DEP_COLUMN_MAP)
         except ParseError:
             raise
+        except Exception as error:
+            raise ParseError(f"Could not read Excel workbook: {error}", source=str(source)) from error
 
-        dags_df = _normalize_columns(
-            pd.read_excel(excel_file, sheet_name=dag_sheet), DAG_COLUMN_MAP
-        )
-        tasks_df = _normalize_columns(
-            pd.read_excel(excel_file, sheet_name=task_sheet), TASK_COLUMN_MAP
-        )
-        deps_df = _normalize_columns(
-            pd.read_excel(excel_file, sheet_name=dep_sheet), DEP_COLUMN_MAP
-        )
+        dag_sheet.require_columns("dag_id")
+        if not task_sheet.frame.empty:
+            task_sheet.require_columns("dag_ref", "task_id")
+        if not dep_sheet.frame.empty:
+            dep_sheet.require_columns("dag_ref", "task_id")
 
-        # Build DAG definitions
-        dags: list[DagDefinition] = []
+        dag_rows = list(dag_sheet.rows())
+        refs = {_dag_ref(row.get("dag_ref")) for _, row in dag_rows}
+        tasks: dict[Any, dict[str, TaskDefinition]] = defaultdict(dict)
+        task_cells: dict[tuple[Any, str], dict[str | None, list[str]]] = {}
+        for index, row in task_sheet.rows():
+            ref = _dag_ref(row.get("dag_ref"))
+            if not _text(row.get("dag_ref")) or ref not in refs:
+                cell = task_sheet.cell(index, "dag_ref")
+                raise ParseError(f"{cell}: Use a dag_ref from {dag_sheet.name}, got '{ref}'")
 
-        for _, dag_row in dags_df.iterrows():
-            dag_id = str(dag_row.get("dag_id", "")).strip()
-            dag_ref = dag_row.get("dag_ref")
+            task_id = _text(row.get("task_id"))
+            id_cell = task_sheet.cell(index, "task_id")
+            if not task_id:
+                raise ParseError(f"{id_cell}: Enter a task ID")
+            if task_id in tasks[ref]:
+                first = task_cells[ref, task_id][None][0]
+                raise ParseError(f"{id_cell}: Duplicate task ID '{task_id}' (first used in {first})")
 
-            if not dag_id or pd.isna(dag_id) or dag_id == "nan":
-                warnings.append(f"Skipping row with missing DAG_ID (ref: {dag_ref})")
-                continue
-
-            # Resolve schedule
+            task_type = _text(row.get("task_type"))
+            type_cell = task_sheet.cell(index, "task_type")
             try:
-                schedule = _resolve_schedule(
-                    dag_row.get("schedule_type"),
-                    dag_row.get("schedule"),
+                operator = operator_registry.resolve(task_type, strict=True)
+            except KeyError as error:
+                raise ParseError(f"{type_cell}: {error.args[0]}") from error
+
+            specs_cell = task_sheet.cell(index, "task_specs")
+            params_cell = task_sheet.cell(index, "task_parameters")
+            specs = _text(row.get("task_specs"))
+            params = {operator.task_specs_param or "command": specs} if specs else {}
+            extra_params = _parse_key_value_string(row.get("task_parameters"), params_cell)
+            params.update({key: _task_param_value(value) for key, value in extra_params.items()})
+            try:
+                tasks[ref][task_id] = TaskDefinition(
+                    task_id=task_id, operator=operator.key, operator_params=params
                 )
-            except (ParseError, ValueError) as e:
-                warnings.append(f"DAG '{dag_id}': {e}")
-                schedule = ScheduleConfig(type=ScheduleType.MANUAL, expression=None)
+            except ValidationError as error:
+                raise ParseError(f"{id_cell}: {_model_error(error)}") from error
 
-            # Build default_args: base defaults + user overrides
-            default_args: dict[str, Any] = {
-                "owner": "airflow",
-                "start_date": "2024-01-01",
-            }
-            user_defaults = _parse_key_value_string(dag_row.get("default_args"))
-            default_args.update(user_defaults)
+            cells = {param: [params_cell] for param in operator.all_param_names}
+            if operator.task_specs_param:
+                cells[operator.task_specs_param] = [specs_cell]
+            elif specs:
+                cells["command"] = [specs_cell]
+            cells.update({param: [params_cell] for param in extra_params})
+            task_cells[ref, task_id] = {**cells, None: [id_cell], "operator": [type_cell]}
 
-            # Parse DAG-level parameters for catchup
-            dag_params = _parse_key_value_string(dag_row.get("dag_parameters"))
-            catchup = False
-            if "catchup" in dag_params:
-                catchup = str(dag_params["catchup"]).lower() == "true"
+        for index, row in dep_sheet.rows():
+            ref = _dag_ref(row.get("dag_ref"))
+            if not _text(row.get("dag_ref")) or ref not in refs:
+                cell = dep_sheet.cell(index, "dag_ref")
+                raise ParseError(f"{cell}: Use a dag_ref from {dag_sheet.name}, got '{ref}'")
 
-            # Parse description
-            description = ""
-            desc_raw = dag_row.get("description")
-            if pd.notna(desc_raw):
-                description = str(desc_raw).strip()
+            task_id = _text(row.get("task_id"))
+            if task_id not in tasks[ref]:
+                cell = dep_sheet.cell(index, "task_id")
+                raise ParseError(f"{cell}: Unknown task '{task_id}' for dag_ref '{ref}'")
 
-            # Parse tags
-            tags: list[str] = []
-            tags_raw = dag_row.get("tags")
-            if pd.notna(tags_raw) and tags_raw:
-                tags = [t.strip() for t in str(tags_raw).split(",") if t.strip()]
+            upstream = _text(row.get("upstream_task"))
+            if not upstream:
+                continue
+            upstream_cell = dep_sheet.cell(index, "upstream_task")
+            if upstream not in tasks[ref]:
+                raise ParseError(f"{upstream_cell}: Unknown upstream task '{upstream}'")
+            if upstream == task_id:
+                raise ParseError(f"{upstream_cell}: Task '{task_id}' cannot depend on itself")
+            tasks[ref][task_id].dependencies.append(upstream)
+            task_cells[ref, task_id].setdefault("dependencies", []).append(upstream_cell)
 
-            # Build tasks for this DAG
-            dag_tasks_df = tasks_df[tasks_df["dag_ref"] == dag_ref]
-            tasks: list[TaskDefinition] = []
+        result = ParseResult(source=str(source))
+        for index, row in dag_rows:
+            dag_id = _text(row.get("dag_id"))
+            dag_id_cell = dag_sheet.cell(index, "dag_id")
+            if not dag_id:
+                raise ParseError(f"{dag_id_cell}: Enter a DAG ID")
+            ref = _dag_ref(row.get("dag_ref"))
+            schedule_type = _text(row.get("schedule_type"))
+            try:
+                kind = ScheduleType(schedule_type.lower() or "manual")
+            except ValueError as error:
+                cell = dag_sheet.cell(index, "schedule_type")
+                options = ", ".join(kind.value for kind in ScheduleType)
+                raise ParseError(
+                    f"{cell}: Unknown schedule type '{schedule_type}'. Use {options}"
+                ) from error
+            try:
+                schedule = _resolve_schedule(kind, _text(row.get("schedule")))
+            except ValidationError as error:
+                cell = dag_sheet.cell(index, "schedule")
+                raise ParseError(f"{cell}: {_model_error(error)}") from error
 
-            for _, task_row in dag_tasks_df.iterrows():
-                task_id = str(task_row.get("task_id", "")).strip()
-                if not task_id or pd.isna(task_id) or task_id == "nan":
-                    warnings.append(f"DAG '{dag_id}': Skipping task with missing Task_ID")
-                    continue
-
-                operator = _resolve_operator(task_row.get("task_type"))
-
-                # Build operator params
-                operator_params: dict[str, Any] = {}
-
-                # Add task_specs as the primary operator param
-                task_specs = task_row.get("task_specs")
-                if pd.notna(task_specs) and task_specs:
-                    specs_str = str(task_specs).strip()
-                    # Use registry to determine which param task_specs maps to
-                    specs_param = operator_registry.task_specs_param(operator)
-                    if specs_param:
-                        operator_params[specs_param] = specs_str
-                    elif specs_str:
-                        # Fallback for operators without a task_specs mapping
-                        operator_params["command"] = specs_str
-
-                # Add extra parameters from Task_parameters column
-                extra_params = _parse_key_value_string(task_row.get("task_parameters"))
-                for k, v in extra_params.items():
-                    # Try to convert numeric values
-                    if v.isdigit():
-                        operator_params[k] = int(v)
-                    elif v.lower() in ("true", "false"):
-                        operator_params[k] = v.lower() == "true"
-                    else:
-                        operator_params[k] = v
-
-                # Resolve dependencies
-                task_deps_df = deps_df[
-                    (deps_df["dag_ref"] == dag_ref) & (deps_df["task_id"] == task_id)
-                ]
-                dependencies: list[str] = []
-                for _, dep_row in task_deps_df.iterrows():
-                    upstream = dep_row.get("upstream_task")
-                    if pd.notna(upstream):
-                        up_str = str(upstream).strip()
-                        if up_str and up_str != "nan" and up_str != task_id:
-                            dependencies.append(up_str)
-
-                tasks.append(TaskDefinition(
-                    task_id=task_id,
-                    operator=operator,
-                    operator_params=operator_params,
-                    dependencies=dependencies,
-                ))
-
-            # Create DagDefinition
+            defaults = {"owner": "airflow", "start_date": "2024-01-01"}
+            defaults_cell = dag_sheet.cell(index, "default_args")
+            defaults.update(_parse_key_value_string(row.get("default_args"), defaults_cell))
+            dag_params_cell = dag_sheet.cell(index, "dag_parameters")
+            dag_params = _parse_key_value_string(row.get("dag_parameters"), dag_params_cell)
             try:
                 dag = DagDefinition(
                     dag_id=dag_id,
-                    description=description,
+                    description=_text(row.get("description")),
                     schedule=schedule,
-                    default_args=default_args,
-                    catchup=catchup,
-                    tags=tags,
-                    tasks=tasks,
+                    default_args=defaults,
+                    catchup=dag_params.get("catchup", "").lower() == "true",
+                    tags=[tag.strip() for tag in _text(row.get("tags")).split(",") if tag.strip()],
+                    tasks=[task.model_copy(deep=True) for task in tasks[ref].values()],
                 )
-                dags.append(dag)
-                logger.info("Parsed DAG: %s (%d tasks)", dag_id, len(tasks))
-            except Exception as e:
-                warnings.append(f"DAG '{dag_id}': Failed to create definition: {e}")
+            except ValidationError as error:
+                raise ParseError(f"{dag_id_cell}: {_model_error(error)}") from error
+            result.dags.append(dag)
 
-        return ParseResult(dags=dags, source=str(source), warnings=warnings)
+            schedule_cell = dag_sheet.cell(index, "schedule")
+            dag_cells: dict[str | None, list[str]] = {
+                None: [dag_id_cell],
+                "description": [dag_sheet.cell(index, "description")],
+                "tags": [dag_sheet.cell(index, "tags")],
+                "schedule": [dag_sheet.cell(index, "schedule_type")],
+                "schedule.expression": [schedule_cell],
+                "catchup": [dag_params_cell],
+                "default_args.owner": [defaults_cell],
+                "default_args.start_date": [defaults_cell],
+                "dependencies": [dep_sheet.name],
+            }
+            for field, cells in dag_cells.items():
+                result.locations.setdefault((dag_id, None, field), []).extend(
+                    f"{source} / {cell}" for cell in cells
+                )
+            for task_id in tasks[ref]:
+                for field, cells in task_cells[ref, task_id].items():
+                    result.locations.setdefault((dag_id, task_id, field), []).extend(
+                        f"{source} / {cell}" for cell in cells
+                    )
+        return result

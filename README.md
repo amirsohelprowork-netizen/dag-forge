@@ -1,23 +1,20 @@
 # DAG Forge 🔥
 
-> **The Ultimate DAG Factory Development Toolkit for Apache Airflow Data Engineers**
+> Author and check Airflow workflows using Excel, YAML, or JSON.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Airflow 2.0+](https://img.shields.io/badge/airflow-2.0+-green.svg)](https://airflow.apache.org/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-**DAG Forge** is an open-source, production-grade Python toolkit that empowers Data Teams to author, validate, preview, and generate Apache Airflow DAGs from accessible formats like Excel spreadsheets, YAML, and JSON. 
-
-By abstracting away complex raw Python DAG writing, DAG Forge allows business analysts, data scientists, and engineers to construct massive, interdependent data pipelines with zero coding required. It validates your architecture against strict organizational policies and dynamically renders 100% compliant `dag-factory` YAML configurations ready for deployment.
+**DAG Forge** turns task lists and dependencies into dag-factory YAML for Apache Airflow. Teams can start from a spreadsheet, check task settings and organizational policies, and preview the workflow before handing the generated configuration to their Airflow team.
 
 ---
 
 ## 🚀 Key Features (Why DAG Forge?)
 
 - 📊 **Excel-to-Airflow Pipeline Automation** — Empower non-engineers to design Airflow DAGs using structured Excel templates (`Dag_config`, `Task_details`, `Dependency_flow`).
-- 🤖 **dag-factory Native Integration** — The output is perfectly valid `dag-factory` YAML. Drop it directly into your Airflow DAGs folder.
+- 🤖 **dag-factory Native Integration** — Generate YAML for an Airflow deployment configured to load it with dag-factory.
 - ✅ **Deep Validation & Linting** — Validate parameters for 18 built-in Airflow operators before deployment. Catch typos, missing required variables, and invalid references early.
-- 🔗 **Graph Analysis & Cycle Detection** — Built-in dependency cycle detection, topological sorting, and critical path highlighting prevents broken DAG deployments.
+- 🔗 **Graph Analysis & Cycle Detection** — Inspect task order and critical paths, and catch dependency cycles before generation.
 - 📐 **Jinja2 Template Engine** — Stop repeating yourself. Use built-in dynamic templates for common architectures (ETL pipelines, Sensor-Processor-Notify, Data Quality Checks).
 - 🛡️ **Organizational Policy Engine** — Enforce enterprise-grade standards automatically. Require specific tags, enforce owners, and restrict manual schedules to maintain hygiene across your Airflow deployment.
 - 🌍 **Environment Management** — Seamlessly inject `dev`, `staging`, or `prod` overlays onto your DAGs to dynamically rewrite connections, override pool sizes, or disable schedules in lower environments.
@@ -37,42 +34,38 @@ DAG Forge deeply validates configurations and complex nested parameters for 18 b
 
 ## 📦 Installation
 
+From the repository checkout with Python 3.11 or later, run:
+
 ```bash
-pip install dag-forge
+python -m pip install .
 ```
 
 ---
 
 ## ⚡ Quick Start
 
-### 1. Initialize a Project
-Scaffold a standard DAG Forge project directory structure (`input/`, `output/`, `templates/`) and policy configuration (`dagforge.toml`):
+### 1. Create a project and try the sample
+
 ```bash
 dagforge init --dir my_data_project
 cd my_data_project
+dagforge validate input/starter.xlsx
+dagforge generate input/starter.xlsx -o output
 ```
 
-### 2. Generate Airflow DAGs (dag-factory YAML)
-Convert an Excel pipeline design document into deployable Airflow DAG definitions:
-```bash
-dagforge generate input/pipeline_design.xlsx -o output_yamls/
-```
+Open `input/starter.xlsx` and read the **Start here** tab. The sample starts with an empty task, then runs a Bash command that prints a greeting. It uses a manual schedule and requires no Airflow connections. The last command writes `output/starter_pipeline.yaml`.
 
-### 3. Apply Environment Overlays (Dev/Prod)
-Deploying to production? Generate the DAG while dynamically applying the `prod` configuration overlay from `dagforge.toml`:
-```bash
-dagforge generate input/pipeline_design.xlsx -o output_yamls/ --env prod
-```
+### 2. Edit and check your workflow
 
-### 4. Validate & Preview Before Deploying
-Run deep validation and organization policy checks without generating files:
-```bash
-dagforge validate input/pipeline_design.xlsx
-```
-Preview the graph topology (DAG dependencies) directly in your terminal:
-```bash
-dagforge preview input/pipeline_design.xlsx
-```
+- Set the DAG ID, owner, description, and tags in `Dag_config`.
+- Set the tasks in `Task_details`. For `bash`, enter the shell command in `task_specs`. Enter optional settings such as `retries: 1` in `task_parameters`.
+- Add a row per dependency in `Dependency_flow`. The task in `upstream_task` runs before the task in `task_id`. Use the same `dag_ref` on all three input tabs.
+
+Save the workbook and rerun validation and generation. Excel diagnostics point to cells or sheets when available, for example `Task_details!D3` for a missing Bash command. Use `dagforge preview input/starter.xlsx` to inspect the task order.
+
+Both commands use the validators and policies configured for the project. Run them from the project directory so they can read `dagforge.toml`. If you configure an environment overlay, use the same `--env prod` on both commands. Use `--strict` to fail on warnings. A parse failure stops generation for the whole input batch.
+
+Load and test the generated YAML in your target Airflow and dag-factory environment before deploying it.
 
 ---
 
