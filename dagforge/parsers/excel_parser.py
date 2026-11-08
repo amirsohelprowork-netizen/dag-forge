@@ -71,6 +71,10 @@ DEP_COLUMN_MAP: dict[str, str] = {
     "task_id": "task_id",
     "Upstream_task": "upstream_task",
     "upstream_task": "upstream_task",
+    "Upstream_task_id": "upstream_task",
+    "upstream_task_id": "upstream_task",
+    "Upstream_task_ID": "upstream_task",
+    "upstream_task_ID": "upstream_task",
 }
 
 # Sheet name alternatives (supports original typo "Dad_config")
